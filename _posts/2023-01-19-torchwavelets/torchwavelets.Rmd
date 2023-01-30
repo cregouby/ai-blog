@@ -148,7 +148,7 @@ important_freqs
 
     [1] 1.00343643 0.27491409 0.08247423 
 
-That's once per year, once per quarter, and once every twelve years, approximately. Or, expressed as periodicity, in terms of months (i.e., how many months are there in a period):
+That's once per year, once every 4 years, and once every twelve years, approximately. Or, expressed as periodicity, in terms of months (i.e., how many months are there in a period):
 
 ```{r}
 num_observations_in_season <- 12/important_freqs  
