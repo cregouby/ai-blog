@@ -33,6 +33,7 @@ library(tibble)
 library(stringr)
 library(data.tree)
 library(ggplot2)
+library(recipes)
 ```
 
 ## Dataset
@@ -58,7 +59,7 @@ We can see that
 Obviously this needs to be transformed into data format of choice for {tabnet} to run hierarchical multi-label classification: the `Node` format from package {data.tree}. 
 
 
-### Data fomating
+### Data formating
 
 The convenient way (among other) to turn a tabular dataset into a `Node` tree format consists in glueing the different columns representing the class hierarchy into a column named `pathString` using the `/` separator. This reserved column name and separator is natively recognized by the {data.tree} package for smooth conversion with the `as.Node()` command. 
 
@@ -94,6 +95,25 @@ We finally turn it into a {data.tree} `Node` and we can verify that we get the e
 ```{r}
 print(zoo_tree, "Area", "Range", "Perim.", limit = 10)
 ```
+
+### Data preparation
+
+{recipes} workflow is not available this `Node` dataset for now. So we should have prepare the dataset before turning it to a `Node` object, via numerical values normalization: 
+```{r}
+zoo_baked <- recipes::recipe(zooplankton) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  prep() %>% 
+  bake()
+
+zoo_tree <- zoo_baked %>% 
+  rowid_to_column() %>% 
+  left_join(zoo_hierarchy, by="Class") %>%
+  mutate(pathString = paste("zooplankton", pathString, rowid, sep = "/")) %>% 
+  select(-Class, -rowid) %>% 
+  as.Node()
+```
+
+
 
 ## Tabnet modeling
 
