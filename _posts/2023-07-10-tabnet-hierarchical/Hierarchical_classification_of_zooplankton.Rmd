@@ -46,7 +46,8 @@ Let's first turn the dataset into a `data.tree` format as expected by `{tabnet}`
 
 ```{r}
 #| label: raw dataset
-zooplankton <- readRDS("../../../../_packages/tabnet_experiments/zooplankton_train.rds")
+zooplankton <- readRDS(here::here("../_packages/tabnet_experiments/zooplankton_train.rds"))
+zooplanktest <- readRDS(here::here("../_packages/tabnet_experiments/zooplankton_train.rds"))
 head(zooplankton, 4)
 attr(zooplankton, "path")
 ```
@@ -98,7 +99,8 @@ print(zoo_tree, "Area", "Range", "Perim.", limit = 10)
 
 ### Data preparation
 
-{recipes} workflow is not available this `Node` dataset for now. So we should have prepare the dataset before turning it to a `Node` object, via numerical values normalization: 
+{recipes} workflow is not available for this `Node` dataset for now. So we should have prepared the dataset before turning it to a `Node` object, via numerical values normalization as recommended by the authors. 
+We can in fact use {recipes} fuction to do it, but the full preparation shall be done (`` + ``)
 ```{r}
 zoo_baked <- recipes::recipe(zooplankton) %>% 
   step_normalize(all_numeric_predictors()) %>% 
@@ -117,11 +119,11 @@ zoo_tree <- zoo_baked %>%
 
 ## Tabnet modeling
 
-We are now ready to model
+We are now ready to fit the hierarchical multi-label classification model in just passing the Node object to it:
 
 ```{r}
 #| label:model training for 50 epoch
-zoo_model <- tabnet_fit(zoo_tree, valid_split = .1, epochs = 50, verbose = T, num_workers = 5L)
+zoo_model <- tabnet_fit(zoo_tree, valid_split = .1, epochs = 50, verbose = T)
 ```
 
 Let's diagnose the model training
