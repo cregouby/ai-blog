@@ -100,7 +100,7 @@ print(zoo_tree, "Area", "Range", "Perim.", limit = 10)
 ### Data preparation
 
 {recipes} workflow is not available for this `Node` dataset for now. So we should have prepared the dataset before turning it to a `Node` object, via numerical values normalization as recommended by the authors. 
-We can in fact use {recipes} fuction to do it, but the full preparation shall be done (`` + ``)
+We can in fact use {recipes} function to do it, but the full preparation shall be done including (`prep()` + `bake()`)
 ```{r}
 zoo_baked <- recipes::recipe(zooplankton) %>% 
   step_normalize(all_numeric_predictors()) %>% 
