@@ -11,7 +11,7 @@ author:
     affiliation: Airbus
     affiliation_url: https://www.airbus.com/
 slug: hierarchical
-date: 2023-06-22
+date: last-modified
 categories:
   - Torch
   - Tabnet
@@ -27,6 +27,8 @@ preview: images/MTLG.2005-05-24.H1+B2_170.jpg
 
 ```{r}
 #| label: setup
+#| output: false
+#| warning: false
 library(tabnet)
 library(dplyr)
 library(tibble)
@@ -52,10 +54,12 @@ head(zooplankton, 4)
 attr(zooplankton, "path")
 ```
 
-We can see that
-   - labels are in Class
-   - attributes are in all other columns
-   - the hierarchy of labels are in attr(, "path"). For instance, there is "Copepoda/Podoplea/Poecilostomatoida" which means that Class` "Poecilostomatoida" in the data.frame is part of a supercategory "Podoplea" (together with "Cyclopoida" and "Harpacticoida"). At an even higher level, "Copepoda" contains both "Podoplea" and "Gymnoplea". This is a very basic but classical way of encoding the hierarchy of labels.
+We can see that  
+   - labels are in `Class` column.  
+   - attributes are in all other columns  
+   - the hierarchy of labels are in `attr(, "path")`.  
+
+For instance, there is "Copepoda/Podoplea/Poecilostomatoida" which means that Class  "Poecilostomatoida" in the data.frame is part of a supercategory "Podoplea" (together with "Cyclopoida" and "Harpacticoida"). At an even higher level, "Copepoda" contains both "Podoplea" and "Gymnoplea". This is a very basic but classical way of encoding the hierarchy of labels.
    
 Obviously this needs to be transformed into data format of choice for {tabnet} to run hierarchical multi-label classification: the `Node` format from package {data.tree}. 
 
@@ -65,7 +69,7 @@ Obviously this needs to be transformed into data format of choice for {tabnet} t
 The convenient way (among other) to turn a tabular dataset into a `Node` tree format consists in glueing the different columns representing the class hierarchy into a column named `pathString` using the `/` separator. This reserved column name and separator is natively recognized by the {data.tree} package for smooth conversion with the `as.Node()` command. 
 
 Another constraint to encode the tabular data into a `Node` tree is to have a tree root, i.e. a constant column being the parent of each node of the graph. We will chose "zooplankton" here for the tree root.
-Then we also need to have a leaf on the tree being a placeholder for all the predictor values of each sample. For this, we will use the row id, conveniently provided by the `rowid_to_column()` function.
+Then we also need to have a leaf on the tree being a placeholder for all the predictor values of each sample. For this, we will use the row names, conveniently provided by the `rownames_to_column()` function, that will create a `rowname` column.
 
 To do so, we will use extensively {dplyr} and {stringr}.
 
@@ -83,10 +87,10 @@ We prepend the `path` with "zooplankton" into the reserved `pathString` to have 
 
 ```{r}
 zoo_tree <- zooplankton %>% 
-  rowid_to_column() %>% 
+  rownames_to_column() %>% 
   left_join(zoo_hierarchy, by="Class") %>%
-  mutate(pathString = paste("zooplankton", pathString, rowid, sep = "/")) %>% 
-  select(-Class, -rowid) %>% 
+  mutate(pathString = paste("zooplankton", pathString, rowname, sep = "/")) %>% 
+  select(-Class, -rowname) %>% 
   as.Node()
 ```
 
@@ -106,9 +110,9 @@ zoo_split <- initial_split(zooplankton, prop = .8, strata = "Class")
 ```
 
 
-{recipes} workflow is not natively available for `Node` datasets for now. So we should have prepared the dataset before turning it to a `Node` object, via numerical values normalization as recommended by the authors of [TabNet paper]((https://arxiv.org/abs/1908.07442).  
+Tidymodels {workflow} is not natively available with {tabnet} for `Node` datasets for now. So we need to manually **split** then **prepare** and **bake** the datasets before turning them to a `Node` objects, via numerical values normalization as recommended by the authors of [TabNet paper]((https://arxiv.org/abs/1908.07442).  
 
-We can in fact use {recipes} function to do it, but the full preparation shall be done including (`prep()` + `bake()`)
+We will actually use {recipes} function to do it, but the full preparation shall be done including (`prep()` + `bake()`)
 
 ```{r}
 zoo_prep <- zoo_split %>% 
@@ -150,12 +154,13 @@ We are now ready to fit the hierarchical multi-label classification model in pas
 #| label: model design
 config <- tabnet_config(penalty = .05, decision_width = 6, attention_width = 6, num_steps = 3, 
                         lr_scheduler = "reduce_on_plateau", early_stopping_patience = 5L, step_size = 5,
-                        valid_split = .1, epoch = 100, verbose = TRUE)
+                        valid_split = .1, epoch = 140, checkpoint_epochs = 30, verbose = TRUE)
 ```
+
 ### Model training
 
 ```{r}
-#| label: model training for 50 epoch
+#| label: model training for 140 epoch
 zoo_model <- tabnet_fit(zoo_train_tree, config = config)
 ```
 
