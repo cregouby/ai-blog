@@ -10,7 +10,7 @@ author:
   - name: Christophe Regouby
     affiliation: Airbus
     affiliation_url: https://www.airbus.com/
-slug: safetensors
+slug: hierarchical
 date: 2023-06-22
 categories:
   - Torch
@@ -34,20 +34,20 @@ library(stringr)
 library(data.tree)
 library(ggplot2)
 library(recipes)
+library(rsample)
 ```
 
-## Dataset
+## First look on Dataset
 
 The `plankton` training dataset, courtesy of Ph. Grosjean,  offers us a challenge to apply hierarchical classification on. 
 
 Let's first turn the dataset into a `data.tree` format as expected by `{tabnet}`
 
-### First look on data
+
 
 ```{r}
 #| label: raw dataset
-zooplankton <- readRDS(here::here("../_packages/tabnet_experiments/zooplankton_train.rds"))
-zooplanktest <- readRDS(here::here("../_packages/tabnet_experiments/zooplankton_train.rds"))
+zooplankton <- readRDS(here::here("../../_packages/tabnet_experiments/zooplankton_train.rds"))
 head(zooplankton, 4)
 attr(zooplankton, "path")
 ```
@@ -97,19 +97,42 @@ We finally turn it into a {data.tree} `Node` and we can verify that we get the e
 print(zoo_tree, "Area", "Range", "Perim.", limit = 10)
 ```
 
-### Data preparation
+## Data preparation
 
-{recipes} workflow is not available for this `Node` dataset for now. So we should have prepared the dataset before turning it to a `Node` object, via numerical values normalization as recommended by the authors. 
-We can in fact use {recipes} function to do it, but the full preparation shall be done including (`prep()` + `bake()`)
+### Initiall split
 ```{r}
-zoo_baked <- recipes::recipe(zooplankton) %>% 
-  step_normalize(all_numeric_predictors()) %>% 
-  prep() %>% 
-  bake()
+set.seed(202307)
+zoo_split <- initial_split(zooplankton, prop = .8, strata = "Class")
+```
 
-zoo_tree <- zoo_baked %>% 
+
+{recipes} workflow is not natively available for `Node` datasets for now. So we should have prepared the dataset before turning it to a `Node` object, via numerical values normalization as recommended by the authors of [TabNet paper]((https://arxiv.org/abs/1908.07442).  
+
+We can in fact use {recipes} function to do it, but the full preparation shall be done including (`prep()` + `bake()`)
+
+```{r}
+zoo_prep <- zoo_split %>% 
+  training() %>% 
+  recipe() %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  prep()
+
+zoo_train_baked <- zoo_prep %>% 
+  bake(new_data = NULL)
+
+zoo_test_baked <- zoo_prep %>% 
+  bake(new_data = zoo_split %>% testing())
+
+zoo_train_tree <- zoo_train_baked %>% 
   rowid_to_column() %>% 
-  left_join(zoo_hierarchy, by="Class") %>%
+  left_join(zoo_hierarchy, by = "Class") %>%
+  mutate(pathString = paste("zooplankton", pathString, rowid, sep = "/")) %>% 
+  select(-Class, -rowid) %>% 
+  as.Node()
+
+zoo_test_tree <- zoo_test_baked %>% 
+  rowid_to_column() %>% 
+  left_join(zoo_hierarchy, by = "Class") %>%
   mutate(pathString = paste("zooplankton", pathString, rowid, sep = "/")) %>% 
   select(-Class, -rowid) %>% 
   as.Node()
@@ -119,21 +142,50 @@ zoo_tree <- zoo_baked %>%
 
 ## Tabnet modeling
 
-We are now ready to fit the hierarchical multi-label classification model in just passing the Node object to it:
+We are now ready to fit the hierarchical multi-label classification model in passing the Node object to it:
+
+### Model design
 
 ```{r}
-#| label:model training for 50 epoch
-zoo_model <- tabnet_fit(zoo_tree, valid_split = .1, epochs = 50, verbose = T)
+#| label: model design
+config <- tabnet_config(penalty = .05, decision_width = 6, attention_width = 6, num_steps = 3, 
+                        lr_scheduler = "reduce_on_plateau", early_stopping_patience = 5L, step_size = 5,
+                        valid_split = .1, epoch = 100, verbose = TRUE)
 ```
+### Model training
+
+```{r}
+#| label: model training for 50 epoch
+zoo_model <- tabnet_fit(zoo_train_tree, config = config)
+```
+
+### Training diagnostic
 
 Let's diagnose the model training
 ```{r}
 autoplot(zoo_model)
 ```
+### Variable importance
+```{r}
+vip::vip(zoo_model)
+```
+
+
+### Model attention map
 
 Explain the model
 ```{r}
-zoo_explain <- tabnet_explain(zoo_model, zoo_tree)
-autoplot(zoo_explain, quantile = .95)
+zoo_explain <- tabnet_explain(zoo_model, zoo_train_tree)
+autoplot(zoo_explain, quantile = .99)
+```
+### Look at inference results
+
+```{r}
+zoo_hat <- bind_cols(
+    predict(zoo_model, zoo_test_tree),
+    tabnet:::node_to_df(zoo_test_tree)$y
+  )
+sample_n(zoo_hat, size = 5)
+
 ```
 
