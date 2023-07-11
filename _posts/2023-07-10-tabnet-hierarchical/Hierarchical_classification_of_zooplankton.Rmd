@@ -42,10 +42,7 @@ library(rsample)
 
 ## First look on Dataset
 
-The `plankton` training dataset, courtesy of Ph. Grosjean,  offers us a challenge to apply hierarchical classification on. 
-
-Let's first turn the dataset into a `data.tree` format as expected by `{tabnet}`
-
+The `plankton` training dataset, courtesy of Pr. Ph. Grosjean,  offers us a challenge to apply hierarchical classification on. 
 
 
 ```{r}
@@ -63,10 +60,11 @@ We can see that
 
 For instance, there is "Copepoda/Podoplea/Poecilostomatoida" which means that Class  "Poecilostomatoida" in the data.frame is part of a supercategory "Podoplea" (together with "Cyclopoida" and "Harpacticoida"). At an even higher level, "Copepoda" contains both "Podoplea" and "Gymnoplea". This is a very basic but classical way of encoding the hierarchy of labels.
    
-Obviously this needs to be transformed into data format of choice for {tabnet} to run hierarchical multi-label classification: the `Node` format from package {data.tree}. 
+Obviously this needs to be transformed into data format of choice for `{tabnet}` to run hierarchical multi-label classification: the `Node` format from package `{data.tree}`. 
 
+We can now proceed with this transformation
 
-### Data formating
+### Data format transformation
 
 The convenient way (among other) to turn a tabular dataset into a `Node` tree format consists in glueing the different columns representing the class hierarchy into a column named `pathString` using the `/` separator. This reserved column name and separator is natively recognized by the {data.tree} package for smooth conversion with the `as.Node()` command. 
 
@@ -112,15 +110,16 @@ print(zoo_tree, "Area", "Range", "Perim.", limit = 10)
 ```{r}
 set.seed(202307)
 zoo_split <- initial_split(
-  zoo_dataset %>% select(-rowname),
+  zoo_dataset,
   prop = .8, strata = "pathString"
 )
 # few observation in the test-set to look at
-test_ids <- sample.int(nrow(testing(zoo_split)), 8) 
+minitest_ids <- testing(zoo_split)[sample.int(nrow(testing(zoo_split)), 8), "rowname"] 
 ```
 
 
-Tidymodels {workflow} is not natively available with {tabnet} for `Node` datasets for now. So we need to manually **split** then **prepare** and **bake** the datasets before turning them to a `Node` objects, via numerical values normalization as recommended by the authors of [TabNet paper]((https://arxiv.org/abs/1908.07442).  
+Tidymodels {workflow} is not natively available with {tabnet} for `Node` formatted datasets for now. So we need to separately run **split** then **prepare** and **bake** with datasets before turning them to a `Node` objects.  
+Data transformation includes numerical values normalization as recommended by the authors of [TabNet paper]((https://arxiv.org/abs/1908.07442).  
 
 We will actually use {recipes} function to do it, but the full preparation shall be done including (`prep()` + `bake()`)
 
@@ -137,20 +136,26 @@ zoo_train_baked <- zoo_prep %>%
 zoo_test_baked <- zoo_prep %>% 
   bake(new_data = zoo_split %>% testing())
 
+zoo_minitest_baked <- zoo_prep %>% 
+  bake(new_data = zoo_dataset %>% filter(rowname %in% minitest_ids))
+
 zoo_train_tree <- zoo_train_baked %>% 
-  rownames_to_column() %>% 
   mutate(pathString = paste("zooplankton", pathString, rowname, sep = "/")) %>% 
   select( -rowname) %>% 
   as.Node()
 
-zoo_test_tree <- zoo_test_baked %>%
-  rownames_to_column() %>% 
-  mutate(pathString = paste("zooplankton", pathString, rowname, sep = "/")) %>% 
-  select( -rowname) %>% 
-  as.Node()
+zoo_minitest_multi <- zoo_minitest_baked %>%
+  select(-rowname) %>% 
+  separate_wider_delim(cols = pathString, delim = "/", names = c("level_2", "level_3", "level_4" ), too_few = "align_start") %>% 
+  mutate(level_4 = coalesce(level_4, level_3)) %>% 
+  mutate_if(is.character, as.factor)
+
 ```
 
-
+::: {.callout-note}
+## Note about `rowname`
+`rowname` has been turn into column to be used as last (dropped) level of the hierarchy because the `as.Node()` function is reordoning rows (that are in the same hierarchy) and columns (alphabetically). It will be used to get back to observations for side-by-side comparison.
+:::
 
 ## Tabnet modeling
 
@@ -176,12 +181,16 @@ From this point, the natural way-forward in a data-science workflow is to diagno
 ### Look at inference results
 
 ```{r}
+# zoo_hat_hier <- bind_cols(
+#     predict(zoo_model_hier, zoo_minitest_tree),
+#     tabnet:::node_to_df(zoo_minitest_tree)$y
+#   )
 zoo_hat_hier <- bind_cols(
-    predict(zoo_model_hier, zoo_test_tree),
-    tabnet:::node_to_df(zoo_test_tree)$y
+    predict(zoo_model_hier, zoo_minitest_multi),
+    zoo_minitest_multi %>% select(starts_with("level_"))
   )
 knitr::kable(
-  zoo_hat_hier[test_ids, ]
+  zoo_hat_hier
 )
 ```
 
@@ -202,11 +211,13 @@ Error in `tabnet_bridge()` at tabnet/R/hardhat.R:154:2:
 
 ```{r}
 zoo_train_multi <- zoo_train_baked %>% 
+  select(-rowname) %>% 
   separate_wider_delim(cols = pathString, delim = "/", names = c("level_2", "level_3", "level_4" ), too_few = "align_start") %>% 
   mutate(level_4 = coalesce(level_4, level_3)) %>% 
   mutate_if(is.character, as.factor)
 
 zoo_test_multi <- zoo_test_baked %>%
+  select(-rowname) %>% 
   separate_wider_delim(cols = pathString, delim = "/", names = c("level_2", "level_3", "level_4" ), too_few = "align_start") %>% 
   mutate(level_4 = coalesce(level_4, level_3)) %>% 
   mutate_if(is.character, as.factor)
@@ -226,12 +237,13 @@ zoo_model_multi <- tabnet_fit(level_2 + level_3 + level_4 ~ ., data = zoo_train_
 
 ```{r}
 zoo_hat_multi <- bind_cols(
-    predict(zoo_model_multi, zoo_test_multi),
-    zoo_test_multi %>% select(starts_with("level_"))
+    predict(zoo_model_multi, zoo_minitest_multi),
+    zoo_minitest_multi %>% select(starts_with("level_"))
   )
 knitr::kable(
-  zoo_hat_multi[test_ids, ]
+  zoo_hat_multi
 )
+
 
 ```
 
@@ -279,5 +291,15 @@ autoplot(zoo_explain_hier, quantile = .99)
 
 zoo_explain_multi <- tabnet_explain(zoo_model_multi, zoo_train_multi)
 autoplot(zoo_explain_multi, quantile = .99)
+```
+
+## Hierarchy violation count
+```{r}
+# simple multi-label
+pred_multi <- predict(zoo_model_multi, zoo_test_multi) %>% 
+  reframe(hierarchy = paste(`.pred_class_level_2`, .pred_class_level_3, .pred_class_level_4, sep = "/")) %>% 
+  mutate(violation = !(hierarchy %in% zoo_hierarchy$pathString))
+
+
 ```
 
